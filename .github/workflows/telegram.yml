@@ -1,0 +1,48 @@
+name: Relais Telegram
+
+on:
+  push:
+    paths:
+      - 'outbox/**'
+  workflow_dispatch:
+
+jobs:
+  envoyer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Envoyer le message sur Telegram
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -s outbox/message.html ]; then
+            echo "Aucun message à envoyer (outbox/message.html absent ou vide)."
+            exit 0
+          fi
+
+          echo "Message de $(wc -c < outbox/message.html) octets."
+
+          # jq encode le fichier en JSON : plus aucun souci d'accents ni de sauts de ligne
+          jq -Rs --arg chat "$TG_CHAT" \
+            '{chat_id: $chat, parse_mode: "HTML", disable_web_page_preview: true, text: .}' \
+            outbox/message.html > payload.json
+
+          code=$(curl -sS -X POST \
+            "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            --data-binary @payload.json \
+            -o reponse.json -w '%{http_code}')
+
+          echo "HTTP $code"
+
+          if jq -e '.ok == true' reponse.json > /dev/null; then
+            echo "Message envoyé sur Telegram ✅"
+          else
+            echo "Échec de l'envoi :"
+            jq -r '.description // "réponse illisible"' reponse.json
+            exit 1
+          fi
